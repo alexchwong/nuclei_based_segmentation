@@ -159,7 +159,7 @@ class CellSegmentator(object):
             )
         return n_prediction
 
-    def label_cells(
+    def label_cells(self, 
         img_nuclear, img_full, 
         NUCLEUS_THRESHOLD = 0.4,
         BORDER_THRESHOLD = 0.15,
@@ -178,7 +178,7 @@ class CellSegmentator(object):
         '''   
         
         # Use blue channel of DAPI (BGR) to determine nuclei boundaries using HCS
-        nuc_segmentations = segmentator.pred_nuclei([img_nuclear[...,0].squeeze()])
+        nuc_segmentations = self.pred_nuclei([img_nuclear[...,0].squeeze()])
         
         markers = label_nuclei(nuc_segmentations[0], img_full, 
             NUCLEUS_THRESHOLD = NUCLEUS_THRESHOLD,
