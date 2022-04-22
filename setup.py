@@ -3,7 +3,7 @@ from pathlib import Path
 from setuptools import find_packages, setup
 
 PROJECT_DIR = Path(__file__).parent.resolve()
-README_FILE = PROJECT_DIR / "README.org"
+README_FILE = PROJECT_DIR / "README.md"
 LONG_DESCR = README_FILE.read_text(encoding="utf-8")
 VERSION = (PROJECT_DIR / "nbcellseg" / "VERSION").read_text().strip()
 GITHUB_URL = "https://github.com/alexchwong/nuclei_based_segmentation"
