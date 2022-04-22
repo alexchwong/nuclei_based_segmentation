@@ -26,210 +26,135 @@ def download_with_url(url_string, file_path, unzip=False):
             zip_ref.extractall(os.path.dirname(file_path))
 
 
-def __fill_holes(image):
-    """Fill_holes for labelled image, with a unique number."""
-    boundaries = segmentation.find_boundaries(image)
-    image = np.multiply(image, np.invert(boundaries))
-    image = ndi.binary_fill_holes(image > 0)
-    image = ndi.label(image)[0]
-    return image
-
-
-def label_nuclei(nuclei_pred):
+def label_nuclei(nuclei_pred, cell_image,
+                 NUCLEUS_THRESHOLD = 0.4,
+                 BORDER_THRESHOLD = 0.15,
+                 IMAGE_THRESHOLD = 0.15,
+                 nuc_small_obj_size = 10, 
+                 cell_small_obj_size = 20,
+                 cell_small_hole_size = 5):
     """Return the labeled nuclei mask data array.
-
     This function works best for Human Protein Atlas cell images with
     predictions from the CellSegmentator class.
-
     Keyword arguments:
     nuclei_pred -- a 3D numpy array of a prediction from a nuclei image.
-
+    cell_image -- a 3D numpy array of combined channel image (BGR - called by cv2.imread())
+    NUCLEUS_THRESHOLD (0.4): minimum intensity (0-1) of blue channel (in nuclei_pred) to be considered positive staining
+    BORDER_THRESHOLD (0.15): minimum intensity of green channel (in nuclei_pred) to be considered cell border
+    IMAGE_THRESHOLD (0.15): minimum intensity of greyscaled cell_image to be considered part of a cell (depends on exposure)
+    nuc_small_obj_size (10): minimum size to be considered nucleus
+    cell_small_obj_size (20): minimum size to be considered a cell
+    cell_small_hole_size (5): remove holes of this size or less
     Returns:
-    nuclei-label -- An array with unique numbers for each found nuclei
+    cell-label -- An array with unique numbers for each found cell
                     in the nuclei_pred. A value of 0 in the array is
                     considered background, and the values 1-n is the
                     areas of the cells 1-n.
     """
     img_copy = np.copy(nuclei_pred[..., 2])
-    borders = (nuclei_pred[..., 1] > 0.05).astype(np.uint8)
+    borders = (nuclei_pred[..., 1] > BORDER_THRESHOLD * 256).astype(np.uint8)
     m = img_copy * (1 - borders)
 
-    img_copy[m <= LOW_THRESHOLD] = 0
-    img_copy[m > LOW_THRESHOLD] = 1
-    img_copy = img_copy.astype(np.bool)
+    img_copy[m <= NUCLEUS_THRESHOLD * 256] = 0
+    img_copy[m > NUCLEUS_THRESHOLD * 256] = 1
+    img_copy = img_copy.astype(bool)
     img_copy = binary_erosion(img_copy)
     # TODO: Add parameter for remove small object size for
     #       differently scaled images.
-    # img_copy = remove_small_objects(img_copy, 500)
+    img_copy = remove_small_objects(img_copy, nuc_small_obj_size)
     img_copy = img_copy.astype(np.uint8)
     markers = measure.label(img_copy).astype(np.uint32)
 
-    mask_img = np.copy(nuclei_pred[..., 2])
-    mask_img[mask_img <= HIGH_THRESHOLD] = 0
-    mask_img[mask_img > HIGH_THRESHOLD] = 1
-    mask_img = mask_img.astype(np.bool)
-    mask_img = remove_small_holes(mask_img, 1000)
+    mask_img = np.copy(cv2.cvtColor(cell_image, cv2.COLOR_BGR2GRAY))
+    mask_img[mask_img <= IMAGE_THRESHOLD * 256] = 0
+    mask_img[mask_img > IMAGE_THRESHOLD * 256] = 1
+    mask_img = mask_img.astype(bool)
+    
+    mask_img = remove_small_objects(mask_img, cell_small_obj_size)
+    mask_img = remove_small_holes(mask_img, cell_small_hole_size)
+    
     # TODO: Figure out good value for remove small objects.
-    # mask_img = remove_small_objects(mask_img, 8)
+    
     mask_img = mask_img.astype(np.uint8)
     nuclei_label = segmentation.watershed(
         mask_img, markers, mask=mask_img, watershed_line=True
     )
-    nuclei_label = remove_small_objects(nuclei_label, 2500)
+    # nuclei_label = remove_small_objects(nuclei_label, 2500)
+    
     nuclei_label = measure.label(nuclei_label)
     return nuclei_label
 
+def facs_two_images(segmentation_mask, image1, image2, label1 = "marker1", label2 = "marker2"):
+    '''
+        Function to generate a FACS-like data frame of results
+        inputs:
+        * segmentation_mask: the value returned by segment_basic()
+        * image1, image2: images of individual channels
+        * label1, label2: labels of individual channels
+        outputs:
+        * a data frame containing:
+          * label: cell ID
+          * area: pixel area of cell
+          * diameter: diameter of cell
+          * perimeter: perimeter of cell
+          * xmin, ymin, xmax, ymax: bounding box of cell
+          * label1, label2: mean channel intensity of cell    
+    '''
+    
+    props1 = measure.regionprops_table(segmentation_mask, 
+        cv2.cvtColor(image1, cv2.COLOR_BGR2GRAY),
+        properties=['label', 'area', 'equivalent_diameter', 'bbox',
+            'mean_intensity', 'solidity', 'orientation', 'perimeter'])
+    props2 = measure.regionprops_table(segmentation_mask, 
+        cv2.cvtColor(image2, cv2.COLOR_BGR2GRAY),
+        properties=['label', 'area', 'equivalent_diameter',
+            'mean_intensity', 'solidity', 'orientation', 'perimeter'])
+    out1 = pd.DataFrame(props1).iloc[1:,:]
+    out2 = pd.DataFrame(props2).iloc[1:,:]
+    final = pd.concat([out1.label, out1.area, out1.equivalent_diameter, out1.perimeter,
+        out1['bbox-0'], out1['bbox-1'], out1['bbox-2'], out1['bbox-3'],
+        out1.mean_intensity, out2.mean_intensity], axis = 1,
+        keys = ["cell_ID", "area", "diameter", "perimeter", 
+            "xmin", "ymin", "xmax", "ymax",
+            label1, label2])
+    return final
 
-def label_cell(nuclei_pred, cell_pred):
-    """Label the cells and the nuclei.
-
-    Keyword arguments:
-    nuclei_pred -- a 3D numpy array of a prediction from a nuclei image.
-    cell_pred -- a 3D numpy array of a prediction from a cell image.
-
-    Returns:
-    A tuple containing:
-    nuclei-label -- A nuclei mask data array.
-    cell-label  -- A cell mask data array.
-
-    0's in the data arrays indicate background while a continous
-    strech of a specific number indicates the area for a specific
-    cell.
-    The same value in cell mask and nuclei mask refers to the identical cell.
-
-    NOTE: The nuclei labeling from this function will be sligthly
-    different from the values in :func:`label_nuclei` as this version
-    will use information from the cell-predictions to make better
-    estimates.
-    """
-    def __wsh(
-        mask_img,
-        threshold,
-        border_img,
-        seeds,
-        threshold_adjustment=0.35,
-        small_object_size_cutoff=10,
-    ):
-        img_copy = np.copy(mask_img)
-        m = seeds * border_img  # * dt
-        img_copy[m <= threshold + threshold_adjustment] = 0
-        img_copy[m > threshold + threshold_adjustment] = 1
-        img_copy = img_copy.astype(np.bool)
-        img_copy = remove_small_objects(img_copy, small_object_size_cutoff).astype(
-            np.uint8
-        )
-
-        mask_img[mask_img <= threshold] = 0
-        mask_img[mask_img > threshold] = 1
-        mask_img = mask_img.astype(np.bool)
-        mask_img = remove_small_holes(mask_img, 1000)
-        mask_img = remove_small_objects(mask_img, 8).astype(np.uint8)
-        markers = ndi.label(img_copy, output=np.uint32)[0]
-        labeled_array = segmentation.watershed(
-            mask_img, markers, mask=mask_img, watershed_line=True
-        )
-        return labeled_array
-
-    nuclei_label = __wsh(
-        nuclei_pred[..., 2] / 255.0,
-        0.4,
-        1 - (nuclei_pred[..., 1] + cell_pred[..., 1]) / 255.0 > 0.05,
-        nuclei_pred[..., 2] / 255,
-        threshold_adjustment=-0.25,
-        small_object_size_cutoff=500,
-    )
-
-    # for hpa_image, to remove the small pseduo nuclei
-    nuclei_label = remove_small_objects(nuclei_label, 2500)
-    nuclei_label = measure.label(nuclei_label)
-    # this is to remove the cell borders' signal from cell mask.
-    # could use np.logical_and with some revision, to replace this func.
-    # Tuned for segmentation hpa images
-    threshold_value = max(0.22, filters.threshold_otsu(cell_pred[..., 2] / 255) * 0.5)
-    # exclude the green area first
-    cell_region = np.multiply(
-        cell_pred[..., 2] / 255 > threshold_value,
-        np.invert(np.asarray(cell_pred[..., 1] / 255 > 0.05, dtype=np.int8)),
-    )
-    sk = np.asarray(cell_region, dtype=np.int8)
-    distance = np.clip(cell_pred[..., 2], 255 * threshold_value, cell_pred[..., 2])
-    cell_label = segmentation.watershed(-distance, nuclei_label, mask=sk)
-    cell_label = remove_small_objects(cell_label, 5500).astype(np.uint8)
-    selem = disk(6)
-    cell_label = closing(cell_label, selem)
-    cell_label = __fill_holes(cell_label)
-    # this part is to use green channel, and extend cell label to green channel
-    # benefit is to exclude cells clear on border but without nucleus
-    sk = np.asarray(
-        np.add(
-            np.asarray(cell_label > 0, dtype=np.int8),
-            np.asarray(cell_pred[..., 1] / 255 > 0.05, dtype=np.int8),
-        )
-        > 0,
-        dtype=np.int8,
-    )
-    cell_label = segmentation.watershed(-distance, cell_label, mask=sk)
-    cell_label = __fill_holes(cell_label)
-    cell_label = np.asarray(cell_label > 0, dtype=np.uint8)
-    cell_label = measure.label(cell_label)
-    cell_label = remove_small_objects(cell_label, 5500)
-    cell_label = measure.label(cell_label)
-    cell_label = np.asarray(cell_label, dtype=np.uint16)
-    nuclei_label = np.multiply(cell_label > 0, nuclei_label) > 0
-    nuclei_label = measure.label(nuclei_label)
-    nuclei_label = remove_small_objects(nuclei_label, 2500)
-    nuclei_label = np.multiply(cell_label, nuclei_label > 0)
-
-    return nuclei_label, cell_label
-
-
-def label_cell2(cell_pred):
-    """label cell with only cell predition"""
-    cell_pred = cell_pred / cell_pred.max()
-    size = cell_pred.shape[0]
-    img = cell_pred.copy()
-    cell_pred[..., 2] = filters.gaussian(cell_pred[..., 2], sigma=8)
-    threshold_value = max(0.22, filters.threshold_otsu(cell_pred[..., 2]))
-    threshold_value1 = max(0.6, filters.threshold_otsu(img[..., 2]))
-    # exclude the green area first
-    cell_region = np.multiply(
-        cell_pred[..., 2],
-        np.logical_and(
-            np.invert(np.asarray(cell_pred[..., 1] > 0.01)),
-            cell_pred[..., 2] > threshold_value
-        )
-    )
-    cell_region1 = np.multiply(
-        img[..., 2] > threshold_value1,
-        np.invert(np.asarray(cell_pred[..., 1] > 0.01)),
-    )
-    cell_region_eroded = morphology.erosion(
-        cell_region1, morphology.square(25))
-    cell_region_eroded = np.asarray(cell_region_eroded, dtype=np.uint8)
-    cell_region_eroded = ndi.label(cell_region_eroded)[0]
-    remove_size_ratio = int((size / 512)**2)
-    cell_region_eroded = remove_small_objects(
-        cell_region_eroded, 10 * remove_size_ratio)
-    cell_region_eroded = np.asarray(cell_region_eroded > 0, dtype=np.uint8)
-    distance = np.clip(cell_pred[..., 2], threshold_value, cell_pred[..., 2])
-    local_maxi = feature.peak_local_max(
-        cell_region_eroded, indices=False, footprint=np.ones((1, 1)))
-    markers = ndi.label(local_maxi)[0]
-    cell_label = segmentation.watershed(-distance, markers, mask=cell_region)
-    cell_label = remove_small_objects(
-        cell_label, 1000 * remove_size_ratio).astype(np.uint8)
-    selem = disk(6)
-    cell_label = closing(cell_label, selem)
-    # this part is to use green channel, and extend cell label to green channel
-    # benefit is to exclude cells clear on border but without nucleus
-    sk = np.logical_or(
-            cell_label > 0,
-            cell_pred[..., 1] > 0.1,
-        )
-    sk = np.asarray(sk, dtype=np.uint8)
-    cell_label = segmentation.watershed(-sk, cell_label, mask=sk)
-    cell_label = __fill_holes(cell_label)
-    cell_label = measure.label(cell_label)
-    #cell_label = np.asarray(cell_label, dtype=np.uint16)
-
-    return cell_label
+def facs_all_channels(segmentation_mask, image_list, label_list):
+    '''
+        Function to generate a FACS-like data frame of results
+        inputs:
+        * segmentation_mask: the value returned by segment_basic()
+        * image1, image2: images of individual channels
+        * label1, label2: labels of individual channels
+        outputs:
+        * a data frame containing:
+          * label: cell ID
+          * area: pixel area of cell
+          * diameter: diameter of cell
+          * perimeter: perimeter of cell
+          * xmin, ymin, xmax, ymax: bounding box of cell
+          * label1, label2: mean channel intensity of cell    
+    '''
+    
+    for index, (image, label) in enumerate(zip(image_list, label_list)):
+        if index == 0:
+            props = measure.regionprops_table(segmentation_mask, 
+                cv2.cvtColor(image, cv2.COLOR_BGR2GRAY),
+                properties=['label', 'area', 'equivalent_diameter', 'bbox', 'perimeter', 'mean_intensity'])
+        else:
+            props = measure.regionprops_table(segmentation_mask, 
+                cv2.cvtColor(image, cv2.COLOR_BGR2GRAY),
+                properties=['mean_intensity'])
+        out = pd.DataFrame(props)
+        
+        if index == 0:
+            final = pd.concat([out.label, out.area, out.equivalent_diameter, out.perimeter,
+                out['bbox-0'], out['bbox-1'], out['bbox-2'], out['bbox-3'],
+                out.mean_intensity], axis = 1,
+                keys = ["cell_ID", "area", "diameter", "perimeter", 
+                    "xmin", "ymin", "xmax", "ymax", label])
+        else:
+            final = pd.concat([final, out.mean_intensity], axis = 1)
+            final.columns = [*final.columns[:-1], label]
+    
+    return final

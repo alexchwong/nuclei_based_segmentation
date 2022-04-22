@@ -10,7 +10,7 @@ import torch.nn
 import torch.nn.functional as F
 from hpacellseg.constants import (MULTI_CHANNEL_CELL_MODEL_URL,
                                   NUCLEI_MODEL_URL, TWO_CHANNEL_CELL_MODEL_URL)
-from hpacellseg.utils import download_with_url
+from hpacellseg.utils import download_with_url, label_nuclei
 from skimage import transform, util
 
 NORMALIZE = {"mean": [124 / 255, 117 / 255, 104 / 255], "std": [1 / (0.0167 * 255)] * 3}
@@ -22,11 +22,9 @@ class CellSegmentator(object):
     def __init__(
         self,
         nuclei_model="./nuclei_model.pth",
-        cell_model="./cell_model.pth",
         scale_factor=0.25,
         device="cuda",
         padding=False,
-        multi_channel_model=True,
     ):
         """Class for segmenting nuclei and whole cells from confocal microscopy images.
 
@@ -48,10 +46,6 @@ class CellSegmentator(object):
                         If the argument is a path that points to a non-existant file,
                         a pretrained nuclei_model is going to get downloaded to the
                         specified path (default: './nuclei_model.pth').
-        cell_model -- A loaded torch cell segmentation model or the
-                      path to a file which contains such a model.
-                      The cell_model argument can be None if only nuclei
-                      are to be segmented (default: './cell_model.pth').
         scale_factor -- How much to scale images before they are fed to
                         segmentation models. Segmentations will be scaled back
                         up by 1/scale_factor to match the original image
@@ -61,9 +55,6 @@ class CellSegmentator(object):
                   device like 'cuda:0' (default: 'cuda').
         padding -- Whether to add padding to the images before feeding the
                    images to the network. (default: False).
-        multi_channel_model -- Control whether to use the 3-channel cell model or not.
-                               If True, use the 3-channel model, otherwise use the
-                               2-channel version (default: True).
         """
         if device != "cuda" and device != "cpu" and "cuda" not in device:
             raise ValueError(f"{device} is not a valid device (cuda/cpu)")
@@ -89,95 +80,8 @@ class CellSegmentator(object):
             nuclei_model = nuclei_model.module
 
         self.nuclei_model = nuclei_model.to(self.device)
-
-        self.multi_channel_model = multi_channel_model
-        if isinstance(cell_model, str):
-            if not os.path.exists(cell_model):
-                print(
-                    f"Could not find {cell_model}. Downloading it now", file=sys.stderr
-                )
-                if self.multi_channel_model:
-                    download_with_url(MULTI_CHANNEL_CELL_MODEL_URL, cell_model)
-                else:
-                    download_with_url(TWO_CHANNEL_CELL_MODEL_URL, cell_model)
-            cell_model = torch.load(cell_model, map_location=torch.device(self.device))
-        self.cell_model = cell_model.to(self.device)
         self.scale_factor = scale_factor
         self.padding = padding
-
-    def _image_conversion(self, images):
-        """Convert/Format images to RGB image arrays list for cell predictions.
-
-        Intended for internal use only.
-
-        Keyword arguments:
-        images -- list of lists of image paths/arrays. It should following the
-                 pattern if with er channel input,
-                 [
-                     [microtubule_path0/image_array0, microtubule_path1/image_array1, ...],
-                     [er_path0/image_array0, er_path1/image_array1, ...],
-                     [nuclei_path0/image_array0, nuclei_path1/image_array1, ...]
-                 ]
-                 or if without er input,
-                 [
-                     [microtubule_path0/image_array0, microtubule_path1/image_array1, ...],
-                     None,
-                     [nuclei_path0/image_array0, nuclei_path1/image_array1, ...]
-                 ]
-        """
-        microtubule_imgs, er_imgs, nuclei_imgs = images
-        if self.multi_channel_model:
-            if er_imgs is None:
-                raise ValueError("Please specify the image path(s) for er channels!")
-            
-            assert isinstance(er_imgs, list)
-        else:
-            if not er_imgs is None:
-                raise ValueError(
-                    "second channel should be None for two channel model predition!"
-                )
-
-        if not isinstance(microtubule_imgs, list):
-            raise ValueError("The microtubule images should be a list")
-        if not isinstance(nuclei_imgs, list):
-            raise ValueError("The microtubule images should be a list")
-
-        if er_imgs:
-            if not len(microtubule_imgs) == len(er_imgs) == len(nuclei_imgs):
-                raise ValueError("The lists of images needs to be the same length")
-        else:
-            if not len(microtubule_imgs) == len(nuclei_imgs):
-                raise ValueError("The lists of images needs to be the same length")
-
-        if not all(isinstance(item, np.ndarray) for item in microtubule_imgs):
-            microtubule_imgs = [
-                os.path.expanduser(item) for _, item in enumerate(microtubule_imgs)
-            ]
-            nuclei_imgs = [
-                os.path.expanduser(item) for _, item in enumerate(nuclei_imgs)
-            ]
-
-            microtubule_imgs = list(
-                map(lambda item: imageio.imread(item), microtubule_imgs)
-            )
-            nuclei_imgs = list(map(lambda item: imageio.imread(item), nuclei_imgs))
-            if er_imgs:
-                er_imgs = [os.path.expanduser(item) for _, item in enumerate(er_imgs)]
-                er_imgs = list(map(lambda item: imageio.imread(item), er_imgs))
-
-        if not er_imgs:
-            er_imgs = [
-                np.zeros(item.shape, dtype=item.dtype)
-                for _, item in enumerate(microtubule_imgs)
-            ]
-        cell_imgs = list(
-            map(
-                lambda item: np.dstack((item[0], item[1], item[2])),
-                list(zip(microtubule_imgs, er_imgs, nuclei_imgs)),
-            )
-        )
-
-        return cell_imgs
 
     def pred_nuclei(self, images):
         """Predict the nuclei segmentation.
@@ -255,72 +159,35 @@ class CellSegmentator(object):
             )
         return n_prediction
 
-    def pred_cells(self, images, precombined=False):
-        """Predict the cell segmentation for a list of images.
-
-        Keyword arguments:
-        images -- list of lists of image paths/arrays. It should following the
-                  pattern if with er channel input,
-                  [
-                      [microtubule_path0/image_array0, microtubule_path1/image_array1, ...],
-                      [er_path0/image_array0, er_path1/image_array1, ...],
-                      [nuclei_path0/image_array0, nuclei_path1/image_array1, ...]
-                  ]
-                  or if without er input,
-                  [
-                      [microtubule_path0/image_array0, microtubule_path1/image_array1, ...],
-                      None,
-                      [nuclei_path0/image_array0, nuclei_path1/image_array1, ...]
-                  ]
-
-                  The ER channel is required when multichannel is True
-                  and required to be None when multichannel is False.
-
-                  The images needs to be of the same size.
-        precombined -- If precombined is True, the list of images is instead supposed to be
-                       a list of RGB numpy arrays (default: False).
-
-        Returns:
-        predictions -- a list of predictions of cell segmentations.
-        """
-
-        def _preprocess(image):
-            self.target_shape = image.shape
-            if not len(image.shape) == 3:
-                raise ValueError("image should has 3 channels")
-            cell_image = transform.rescale(image, self.scale_factor, multichannel=True)
-            if self.padding:
-                rows, cols = cell_image.shape[:2]
-                self.scaled_shape = rows, cols
-                cell_image = cv2.copyMakeBorder(
-                    cell_image,
-                    32,
-                    (32 - rows % 32),
-                    32,
-                    (32 - cols % 32),
-                    cv2.BORDER_REFLECT,
-                )
-            cell_image = cell_image.transpose([2, 0, 1])
-            return cell_image
-
-        def _segment_helper(imgs):
-            with torch.no_grad():
-                mean = torch.as_tensor(NORMALIZE["mean"], device=self.device)
-                std = torch.as_tensor(NORMALIZE["std"], device=self.device)
-                imgs = torch.tensor(imgs).float()
-                imgs = imgs.to(self.device)
-                imgs = imgs.sub_(mean[:, None, None]).div_(std[:, None, None])
-
-                imgs = self.cell_model(imgs)
-                imgs = F.softmax(imgs, dim=1)
-                return imgs
-
-        if not precombined:
-            images = self._image_conversion(images)
-        preprocessed_imgs = map(_preprocess, images)
-        predictions = map(lambda x: _segment_helper([x]), preprocessed_imgs)
-        predictions = map(lambda x: x.to("cpu").numpy()[0], predictions)
-        predictions = map(self._restore_scaling_padding, predictions)
-        predictions = list(map(util.img_as_ubyte, predictions))
-
-        return predictions
+    def label_cells(
+        img_nuclear, img_full, 
+        cell_image_intensity_threshold = 0.12,
+        NUCLEUS_THRESHOLD = 0.4,
+        BORDER_THRESHOLD = 0.15,
+        IMAGE_THRESHOLD = 0.15,
+        nuc_small_obj_size = 10, 
+        cell_small_obj_size = 20,
+        cell_small_hole_size = 5):
+        '''
+            Function to call the segmentation algorithm
+            inputs:
+            * img_nuclear: DAPI image (input of cv.imread() in BGR format)
+            * img_full: combined cell image (cv.imread format)
+            * cell_image_intensity_threshold (0-1): when img_full is greyscaled, minimum threshold to call a cell
+            returns:
+            * markers: 2D array with integers marking pixels that correspond to individual cells
+        '''   
+        
+        # Use blue channel of DAPI (BGR) to determine nuclei boundaries using HCS
+        nuc_segmentations = segmentator.pred_nuclei([img_nuclear[...,0].squeeze()])
+        
+        markers = label_nuclei(nuc_segmentations[0], img_full, 
+            IMAGE_THRESHOLD = cell_image_intensity_threshold,
+            NUCLEUS_THRESHOLD = NUCLEUS_THRESHOLD,
+            BORDER_THRESHOLD = BORDER_THRESHOLD,
+            IMAGE_THRESHOLD = IMAGE_THRESHOLD,
+            nuc_small_obj_size = nuc_small_obj_size, 
+            cell_small_obj_size = cell_small_obj_size,
+            cell_small_hole_size = cell_small_hole_size)
+        
+        return(markers)
