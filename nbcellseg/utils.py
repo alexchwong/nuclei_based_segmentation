@@ -8,6 +8,7 @@ import scipy.ndimage as ndi
 from skimage import filters, measure, segmentation
 from skimage.morphology import (binary_erosion, closing, disk,
                                 remove_small_holes, remove_small_objects)
+import cv2
 
 HIGH_THRESHOLD = 0.4
 LOW_THRESHOLD = HIGH_THRESHOLD - 0.25
