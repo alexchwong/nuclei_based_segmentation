@@ -17,3 +17,5 @@ TWO_CHANNEL_CELL_MODEL_URL = (
     "https://zenodo.org/record/4665863/files/dpn_unet_cell_v2.pth"
 )
 ```
+
+Information about model training: https://zenodo.org/record/6200636#.YmILctNBz-g
