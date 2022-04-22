@@ -8,9 +8,9 @@ import numpy as np
 import torch
 import torch.nn
 import torch.nn.functional as F
-from hpacellseg.constants import (MULTI_CHANNEL_CELL_MODEL_URL,
+from nbcellseg.constants import (MULTI_CHANNEL_CELL_MODEL_URL,
                                   NUCLEI_MODEL_URL, TWO_CHANNEL_CELL_MODEL_URL)
-from hpacellseg.utils import download_with_url, label_nuclei
+from nbcellseg.utils import download_with_url, label_nuclei
 from skimage import transform, util
 
 NORMALIZE = {"mean": [124 / 255, 117 / 255, 104 / 255], "std": [1 / (0.0167 * 255)] * 3}

@@ -5,8 +5,8 @@ from setuptools import find_packages, setup
 PROJECT_DIR = Path(__file__).parent.resolve()
 README_FILE = PROJECT_DIR / "README.org"
 LONG_DESCR = README_FILE.read_text(encoding="utf-8")
-VERSION = (PROJECT_DIR / "hpacellseg" / "VERSION").read_text().strip()
-GITHUB_URL = "https://github.com/CellProfiling/HPA-Cell-Segmentation"
+VERSION = (PROJECT_DIR / "nbcellseg" / "VERSION").read_text().strip()
+GITHUB_URL = "https://github.com/alexchwong/nuclei_based_segmentation"
 DOWNLOAD_URL = f"{GITHUB_URL}/archive/master.zip"
 
 requirements = []
@@ -21,13 +21,13 @@ requirements.append(
 )
 
 setup(
-    name="hpacellseg",
+    name="nbcellseg",
     version=VERSION,
-    description="HPA Cell Segmentation",
+    description="Nuclei based cell segmentation",
     long_description=LONG_DESCR,
     long_description_content_type="text/markdown",
-    author="Hao Xu",
-    author_email="hao.xu@scilifelab.se",
+    author="Alex Wong",
+    author_email="a.wong@centenary.org.au",
     url=GITHUB_URL,
     download_url=DOWNLOAD_URL,
     license="Apache-2.0",

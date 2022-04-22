@@ -1,4 +1,4 @@
-"""Provide a package for hpacellseg."""
+"""Provide a package for nbcellseg."""
 from pathlib import Path
 
 __version__ = (Path(__file__).parent / "VERSION").read_text().strip()
