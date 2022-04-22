@@ -161,10 +161,9 @@ class CellSegmentator(object):
 
     def label_cells(
         img_nuclear, img_full, 
-        cell_image_intensity_threshold = 0.12,
         NUCLEUS_THRESHOLD = 0.4,
         BORDER_THRESHOLD = 0.15,
-        IMAGE_THRESHOLD = 0.15,
+        IMAGE_THRESHOLD = 0.12,
         nuc_small_obj_size = 10, 
         cell_small_obj_size = 20,
         cell_small_hole_size = 5):
@@ -182,7 +181,6 @@ class CellSegmentator(object):
         nuc_segmentations = segmentator.pred_nuclei([img_nuclear[...,0].squeeze()])
         
         markers = label_nuclei(nuc_segmentations[0], img_full, 
-            IMAGE_THRESHOLD = cell_image_intensity_threshold,
             NUCLEUS_THRESHOLD = NUCLEUS_THRESHOLD,
             BORDER_THRESHOLD = BORDER_THRESHOLD,
             IMAGE_THRESHOLD = IMAGE_THRESHOLD,
