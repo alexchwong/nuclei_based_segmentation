@@ -3,6 +3,7 @@ import os.path
 import urllib
 import zipfile
 
+import pandas as pd
 import numpy as np
 import scipy.ndimage as ndi
 from skimage import filters, measure, segmentation
