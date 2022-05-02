@@ -5,6 +5,7 @@ import sys
 import cv2
 import imageio
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn
 import torch.nn.functional as F
@@ -59,6 +60,16 @@ class CellSegmentator(object):
                   device like 'cuda:0' (default: 'cuda').
         padding -- Whether to add padding to the images before feeding the
                    images to the network. (default: False).
+        
+        Exported functions:
+          - pred_nuclei(images): Creates 2-channel (-/G/B) numpy array from model
+              output. The green channel represent cell borders; the blue channel
+              represent cell body.
+          - label_cells(pred, host_image): Use nuclei model prediction and the
+              original fluorescent image to create segmentation markers. If the
+              `host_image` is the DAPI channel, this outputs nuclei mask. If
+              `host_image` is combined channels, this outputs cell mask.
+          - get_cell_markers: Gets cell markers from a list of DAPI and combined channel images
         """
         if device != "cuda" and device != "cpu" and "cuda" not in device:
             raise ValueError(f"{device} is not a valid device (cuda/cpu)")
@@ -163,7 +174,7 @@ class CellSegmentator(object):
             )
         return n_prediction
 
-    def label_nuclei(self, nuclei_pred, cell_image,
+    def label_cells(self, nuclei_pred, host_image,
                      NUCLEUS_THRESHOLD = 0.4,
                      BORDER_THRESHOLD = 0.15,
                      IMAGE_THRESHOLD = 0.15,
@@ -175,7 +186,7 @@ class CellSegmentator(object):
         predictions from the CellSegmentator class.
         Keyword arguments:
         nuclei_pred -- a 3D numpy array of a prediction from a nuclei image.
-        cell_image -- a 3D numpy array of combined channel image (BGR - called by cv2.imread())
+        host_image -- a 3D numpy array (RGB) or image path of fluorescent image
         NUCLEUS_THRESHOLD (0.4): minimum intensity (0-1) of blue channel (in nuclei_pred) to be considered positive staining
         BORDER_THRESHOLD (0.15): minimum intensity of green channel (in nuclei_pred) to be considered cell border
         IMAGE_THRESHOLD (0.15): minimum intensity of greyscaled cell_image to be considered part of a cell (depends on exposure)
@@ -202,7 +213,9 @@ class CellSegmentator(object):
         img_copy = img_copy.astype(np.uint8)
         markers = measure.label(img_copy).astype(np.uint32)
 
-        mask_img = np.copy(cv2.cvtColor(cell_image, cv2.COLOR_BGR2GRAY))
+        if isinstance(host_image, str):
+            host_image = imageio.imread(host_image)
+        mask_img = np.copy(cv2.cvtColor(host_image, cv2.COLOR_RGB2GRAY))
         mask_img[mask_img <= IMAGE_THRESHOLD * 256] = 0
         mask_img[mask_img > IMAGE_THRESHOLD * 256] = 1
         mask_img = mask_img.astype(bool)
@@ -221,33 +234,62 @@ class CellSegmentator(object):
         nuclei_label = measure.label(nuclei_label)
         return nuclei_label
 
-    def label_cells(self, 
-        img_nuclear, img_full, 
+    def get_cell_markers(self,
+        images_dapi, images_combined,
         NUCLEUS_THRESHOLD = 0.4,
         BORDER_THRESHOLD = 0.15,
-        IMAGE_THRESHOLD = 0.12,
         nuc_small_obj_size = 10, 
         cell_small_obj_size = 20,
         cell_small_hole_size = 5):
         '''
-            Function to call the segmentation algorithm
+            Function to return segmentation markers
             inputs:
-            * img_nuclear: DAPI image (input of cv.imread() in BGR format)
-            * img_full: combined cell image (cv.imread format)
-            * cell_image_intensity_threshold (0-1): when img_full is greyscaled, minimum threshold to call a cell
-            returns:
-            * markers: 2D array with integers marking pixels that correspond to individual cells
-        '''   
+            * images_dapi: DAPI channel images. May be a numpy array (RGB) or a list; may be file names
+                DAPI staning is presumed to be in the blue channel
+            * images_combined: Combined (all) channel images.
+                May be a numpy array (RGB) or a list; may be file names
+            * NUCLEUS_THRESHOLD: Fraction blue channel to define nuclei body
+            * BORDER_THRESHOLD: Fraction green channel to define edges between cells
+            * nuc_small_obj_size: Nuclei predictions smaller than this is removed
+            * cell_small_obj_size: cells smaller than this will be removed
+            * cell_small_hole_size: cell holes smaller than this will be removed
+        '''
+        def _label_nuclei_custom(pred, img, intensity):
+            return self.label_cells(pred, img,
+                NUCLEUS_THRESHOLD = NUCLEUS_THRESHOLD,
+                BORDER_THRESHOLD = BORDER_THRESHOLD,
+                IMAGE_THRESHOLD = intensity,
+                nuc_small_obj_size = nuc_small_obj_size, 
+                cell_small_obj_size = cell_small_obj_size,
+                cell_small_hole_size = cell_small_hole_size)
+            
+        def _get_stats_from_mask(mask):
+            props = measure.regionprops_table(mask, properties=['area'])
+            out = pd.DataFrame(props)
+            return out.area.mean(), out.area.std()
+
+        def _determine_image_threshold(nuclei_pred, cell_image, threshold_list):
+            nuclei_masks = [_label_nuclei_custom(nuclei_pred, cell_image, x) for x in threshold_list]
+            nstds = []
+            for mask in nuclei_masks:
+                mask_mean, mask_std = _get_stats_from_mask(mask)
+                nstds.append(mask_std/mask_mean)
+            
+            min_nstd = min(nstds)
+            min_index = nstds.index(min_nstd)
+            return round(threshold_list[min_index], 2)
         
-        # Use blue channel of DAPI (BGR) to determine nuclei boundaries using HCS
-        nuc_segmentations = self.pred_nuclei([img_nuclear[...,0].squeeze()])
-        
-        markers = self.label_nuclei(nuc_segmentations[0], img_full, 
-            NUCLEUS_THRESHOLD = NUCLEUS_THRESHOLD,
-            BORDER_THRESHOLD = BORDER_THRESHOLD,
-            IMAGE_THRESHOLD = IMAGE_THRESHOLD,
-            nuc_small_obj_size = nuc_small_obj_size, 
-            cell_small_obj_size = cell_small_obj_size,
-            cell_small_hole_size = cell_small_hole_size)
-        
+        def _get_optimum_markers(pred, img):
+            threshold_list = np.arange(0.05, 0.3, 0.01)
+            opt_img_threshold = _determine_image_threshold(pred, img, threshold_list)
+            return _label_nuclei_custom(pred, img, opt_img_threshold)
+
+        def _preprocess_img_full(image):
+            if isinstance(image, str):
+                image = imageio.imread(image)
+
+        preprocessed_imgs = map(_preprocess_img_full, images_combined)
+        nuc_segmentations = self.pred_nuclei(images_dapi)
+        markers = [_get_optimum_markers(pred, img) for pred, img in zip(nuc_segmentations, preprocessed_imgs)]
+
         return(markers)
