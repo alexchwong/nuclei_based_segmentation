@@ -18,6 +18,8 @@ from skimage import filters, measure, segmentation
 from skimage.morphology import (binary_erosion, closing, disk,
                                 remove_small_holes, remove_small_objects)
 
+from tqdm import tqdm
+
 NORMALIZE = {"mean": [124 / 255, 117 / 255, 104 / 255], "std": [1 / (0.0167 * 255)] * 3}
 
 
@@ -151,7 +153,7 @@ class CellSegmentator(object):
         predictions = map(lambda x: _segment_helper([x]), preprocessed_imgs)
         predictions = map(lambda x: x.to("cpu").numpy()[0], predictions)
         predictions = map(util.img_as_ubyte, predictions)
-        predictions = list(map(self._restore_scaling_padding, predictions))
+        predictions = list(tqdm(map(self._restore_scaling_padding, predictions)))
         return predictions
 
     def _restore_scaling_padding(self, n_prediction):
@@ -290,10 +292,18 @@ class CellSegmentator(object):
             return image
 
         print("Loading images")
-        preprocessed_imgs = [_preprocess_img_full(img) for img in images_combined]
+        if !isinstance(images_combined, list):
+            images_combined = [images_combined]
+            
+        preprocessed_imgs = []
+        for img in tqdm(images_combined):
+            preprocessed_imgs.append(_preprocess_img_full(img))
+        
         print("Detecting nuclei")
         nuc_segmentations = self.pred_nuclei(images_dapi)
         print("Optimizing segmentations")
-        markers = [_get_optimum_markers(pred, img, threshold_list) for pred, img in zip(nuc_segmentations, preprocessed_imgs)]
+        markers = []
+        for pred, img in tqdm(zip(nuc_segmentations, preprocessed_imgs)):
+            marker.append(_get_optimum_markers(pred, img, threshold_list))
 
         return(markers)
