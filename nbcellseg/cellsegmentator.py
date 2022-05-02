@@ -11,7 +11,7 @@ import torch.nn
 import torch.nn.functional as F
 from nbcellseg.constants import (MULTI_CHANNEL_CELL_MODEL_URL,
                                   NUCLEI_MODEL_URL, TWO_CHANNEL_CELL_MODEL_URL)
-from nbcellseg.utils import download_with_url, label_nuclei
+from nbcellseg.utils import download_with_url
 from skimage import transform, util
 
 from skimage import filters, measure, segmentation
