@@ -292,7 +292,7 @@ class CellSegmentator(object):
             return image
 
         print("Loading images")
-        if !isinstance(images_combined, list):
+        if not isinstance(images_combined, list):
             images_combined = [images_combined]
             
         preprocessed_imgs = []
