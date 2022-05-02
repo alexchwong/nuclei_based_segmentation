@@ -290,7 +290,7 @@ class CellSegmentator(object):
             return image
 
         print("Loading images")
-        preprocessed_imgs = [_preprocess_img_full(img) for img in imgs_full]
+        preprocessed_imgs = [_preprocess_img_full(img) for img in images_combined]
         print("Detecting nuclei")
         nuc_segmentations = self.pred_nuclei(images_dapi)
         print("Optimizing segmentations")
