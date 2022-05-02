@@ -13,6 +13,10 @@ from nbcellseg.constants import (MULTI_CHANNEL_CELL_MODEL_URL,
 from nbcellseg.utils import download_with_url, label_nuclei
 from skimage import transform, util
 
+from skimage import filters, measure, segmentation
+from skimage.morphology import (binary_erosion, closing, disk,
+                                remove_small_holes, remove_small_objects)
+
 NORMALIZE = {"mean": [124 / 255, 117 / 255, 104 / 255], "std": [1 / (0.0167 * 255)] * 3}
 
 
@@ -159,6 +163,64 @@ class CellSegmentator(object):
             )
         return n_prediction
 
+    def label_nuclei(self, nuclei_pred, cell_image,
+                     NUCLEUS_THRESHOLD = 0.4,
+                     BORDER_THRESHOLD = 0.15,
+                     IMAGE_THRESHOLD = 0.15,
+                     nuc_small_obj_size = 10, 
+                     cell_small_obj_size = 20,
+                     cell_small_hole_size = 5):
+        """Return the labeled nuclei mask data array.
+        This function works best for Human Protein Atlas cell images with
+        predictions from the CellSegmentator class.
+        Keyword arguments:
+        nuclei_pred -- a 3D numpy array of a prediction from a nuclei image.
+        cell_image -- a 3D numpy array of combined channel image (BGR - called by cv2.imread())
+        NUCLEUS_THRESHOLD (0.4): minimum intensity (0-1) of blue channel (in nuclei_pred) to be considered positive staining
+        BORDER_THRESHOLD (0.15): minimum intensity of green channel (in nuclei_pred) to be considered cell border
+        IMAGE_THRESHOLD (0.15): minimum intensity of greyscaled cell_image to be considered part of a cell (depends on exposure)
+        nuc_small_obj_size (10): minimum size to be considered nucleus
+        cell_small_obj_size (20): minimum size to be considered a cell
+        cell_small_hole_size (5): remove holes of this size or less
+        Returns:
+        cell-label -- An array with unique numbers for each found cell
+                        in the nuclei_pred. A value of 0 in the array is
+                        considered background, and the values 1-n is the
+                        areas of the cells 1-n.
+        """
+        img_copy = np.copy(nuclei_pred[..., 2])
+        borders = (nuclei_pred[..., 1] > BORDER_THRESHOLD * 256).astype(np.uint8)
+        m = img_copy * (1 - borders)
+
+        img_copy[m <= NUCLEUS_THRESHOLD * 256] = 0
+        img_copy[m > NUCLEUS_THRESHOLD * 256] = 1
+        img_copy = img_copy.astype(bool)
+        img_copy = binary_erosion(img_copy)
+        # TODO: Add parameter for remove small object size for
+        #       differently scaled images.
+        img_copy = remove_small_objects(img_copy, nuc_small_obj_size)
+        img_copy = img_copy.astype(np.uint8)
+        markers = measure.label(img_copy).astype(np.uint32)
+
+        mask_img = np.copy(cv2.cvtColor(cell_image, cv2.COLOR_BGR2GRAY))
+        mask_img[mask_img <= IMAGE_THRESHOLD * 256] = 0
+        mask_img[mask_img > IMAGE_THRESHOLD * 256] = 1
+        mask_img = mask_img.astype(bool)
+        
+        mask_img = remove_small_objects(mask_img, cell_small_obj_size)
+        mask_img = remove_small_holes(mask_img, cell_small_hole_size)
+        
+        # TODO: Figure out good value for remove small objects.
+        
+        mask_img = mask_img.astype(np.uint8)
+        nuclei_label = segmentation.watershed(
+            mask_img, markers, mask=mask_img, watershed_line=True
+        )
+        # nuclei_label = remove_small_objects(nuclei_label, 2500)
+        
+        nuclei_label = measure.label(nuclei_label)
+        return nuclei_label
+
     def label_cells(self, 
         img_nuclear, img_full, 
         NUCLEUS_THRESHOLD = 0.4,
@@ -180,7 +242,7 @@ class CellSegmentator(object):
         # Use blue channel of DAPI (BGR) to determine nuclei boundaries using HCS
         nuc_segmentations = self.pred_nuclei([img_nuclear[...,0].squeeze()])
         
-        markers = label_nuclei(nuc_segmentations[0], img_full, 
+        markers = self.label_nuclei(nuc_segmentations[0], img_full, 
             NUCLEUS_THRESHOLD = NUCLEUS_THRESHOLD,
             BORDER_THRESHOLD = BORDER_THRESHOLD,
             IMAGE_THRESHOLD = IMAGE_THRESHOLD,
