@@ -238,6 +238,7 @@ class CellSegmentator(object):
         images_dapi, images_combined,
         NUCLEUS_THRESHOLD = 0.4,
         BORDER_THRESHOLD = 0.15,
+        threshold_list = np.arange(0.05, 0.2, 0.02),
         nuc_small_obj_size = 10, 
         cell_small_obj_size = 20,
         cell_small_hole_size = 5):
@@ -279,17 +280,20 @@ class CellSegmentator(object):
             min_index = nstds.index(min_nstd)
             return round(threshold_list[min_index], 2)
         
-        def _get_optimum_markers(pred, img):
-            threshold_list = np.arange(0.05, 0.3, 0.01)
+        def _get_optimum_markers(pred, img, threshold_list):
             opt_img_threshold = _determine_image_threshold(pred, img, threshold_list)
             return _label_nuclei_custom(pred, img, opt_img_threshold)
 
         def _preprocess_img_full(image):
             if isinstance(image, str):
                 image = imageio.imread(image)
+            return image
 
-        preprocessed_imgs = map(_preprocess_img_full, images_combined)
+        print("Loading images")
+        preprocessed_imgs = [_preprocess_img_full(img) for img in imgs_full]
+        print("Detecting nuclei")
         nuc_segmentations = self.pred_nuclei(images_dapi)
-        markers = [_get_optimum_markers(pred, img) for pred, img in zip(nuc_segmentations, preprocessed_imgs)]
+        print("Optimizing segmentations")
+        markers = [_get_optimum_markers(pred, img, threshold_list) for pred, img in zip(nuc_segmentations, preprocessed_imgs)]
 
         return(markers)
