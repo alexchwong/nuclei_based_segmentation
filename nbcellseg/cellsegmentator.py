@@ -100,7 +100,7 @@ class CellSegmentator(object):
         self.scale_factor = scale_factor
         self.padding = padding
 
-    def pred_nuclei(self, images):
+    def pred_nuclei(self, images, as_cells = False):
         """Predict the nuclei segmentation.
 
         Keyword arguments:
@@ -122,7 +122,10 @@ class CellSegmentator(object):
             if len(image.shape) == 2:
                 image = np.dstack((image, image, image))
             image = transform.rescale(image, self.scale_factor, multichannel=True)
-            nuc_image = np.dstack((image[..., 2], image[..., 2], image[..., 2]))
+            if not as_cells:
+                nuc_image = np.dstack((image[..., 2], image[..., 2], image[..., 2]))
+            else:
+                nuc_image = image
             if self.padding:
                 rows, cols = nuc_image.shape[:2]
                 self.scaled_shape = rows, cols
@@ -177,12 +180,12 @@ class CellSegmentator(object):
         return n_prediction
 
     def label_cells(self, nuclei_pred, host_image,
-                     NUCLEUS_THRESHOLD = 0.4,
-                     BORDER_THRESHOLD = 0.15,
-                     IMAGE_THRESHOLD = 0.15,
-                     nuc_small_obj_size = 10, 
-                     cell_small_obj_size = 20,
-                     cell_small_hole_size = 5):
+                    NUCLEUS_THRESHOLD = 0.4,
+                    BORDER_THRESHOLD = 0.15,
+                    IMAGE_THRESHOLD = 0.15,
+                    nuc_small_obj_size = 10, 
+                    cell_small_obj_size = 20,
+                    cell_small_hole_size = 5):
         """Return the labeled nuclei mask data array.
         This function works best for Human Protein Atlas cell images with
         predictions from the CellSegmentator class.
@@ -238,6 +241,7 @@ class CellSegmentator(object):
 
     def get_cell_markers(self,
         images_dapi, images_combined,
+        as_cells = False,
         NUCLEUS_THRESHOLD = 0.4,
         BORDER_THRESHOLD = 0.15,
         threshold_list = np.arange(0.05, 0.2, 0.02),
@@ -300,7 +304,7 @@ class CellSegmentator(object):
             preprocessed_imgs.append(_preprocess_img_full(img))
         
         print("Detecting nuclei")
-        nuc_segmentations = self.pred_nuclei(images_dapi)
+        nuc_segmentations = self.pred_nuclei(images_dapi, as_cells)
         print("Optimizing segmentations")
         markers = []
         for pred, img in tqdm(zip(nuc_segmentations, preprocessed_imgs)):
