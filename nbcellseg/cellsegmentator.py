@@ -306,4 +306,4 @@ class CellSegmentator(object):
         for pred, img in tqdm(zip(nuc_segmentations, preprocessed_imgs)):
             markers.append(_get_optimum_markers(pred, img, threshold_list))
 
-        return(markers)
+        return markers, nuc_segmentations
