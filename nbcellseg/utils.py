@@ -43,13 +43,19 @@ def facs_two_images(segmentation_mask, image1, image2, label1 = "marker1", label
           * xmin, ymin, xmax, ymax: bounding box of cell
           * label1, label2: mean channel intensity of cell    
     '''
+    def _preprocess_img_full(image):
+        if isinstance(image, str):
+            image = imageio.imread(image)
+        return image
+    image1 = _preprocess_img_full(image1)
+    image2 = _preprocess_img_full(image2)
     
     props1 = measure.regionprops_table(segmentation_mask, 
-        cv2.cvtColor(image1, cv2.COLOR_BGR2GRAY),
+        cv2.cvtColor(image1, cv2.COLOR_RGB2GRAY),
         properties=['label', 'area', 'equivalent_diameter', 'bbox',
             'mean_intensity', 'solidity', 'orientation', 'perimeter'])
     props2 = measure.regionprops_table(segmentation_mask, 
-        cv2.cvtColor(image2, cv2.COLOR_BGR2GRAY),
+        cv2.cvtColor(image2, cv2.COLOR_RGB2GRAY),
         properties=['label', 'area', 'equivalent_diameter',
             'mean_intensity', 'solidity', 'orientation', 'perimeter'])
     out1 = pd.DataFrame(props1).iloc[1:,:]
@@ -78,15 +84,24 @@ def facs_all_channels(segmentation_mask, image_list, label_list):
           * xmin, ymin, xmax, ymax: bounding box of cell
           * label1, label2: mean channel intensity of cell    
     '''
+
+    def _preprocess_img_full(image):
+        if isinstance(image, str):
+            image = imageio.imread(image)
+        return image
+        
+    preprocessed_imgs = []
+    for img in tqdm(image_list):
+        preprocessed_imgs.append(_preprocess_img_full(img))
     
-    for index, (image, label) in enumerate(zip(image_list, label_list)):
+    for index, (image, label) in enumerate(zip(preprocessed_imgs, label_list)):
         if index == 0:
             props = measure.regionprops_table(segmentation_mask, 
-                cv2.cvtColor(image, cv2.COLOR_BGR2GRAY),
+                cv2.cvtColor(image, cv2.COLOR_RGB2GRAY),
                 properties=['label', 'area', 'equivalent_diameter', 'bbox', 'perimeter', 'mean_intensity'])
         else:
             props = measure.regionprops_table(segmentation_mask, 
-                cv2.cvtColor(image, cv2.COLOR_BGR2GRAY),
+                cv2.cvtColor(image, cv2.COLOR_RGB2GRAY),
                 properties=['mean_intensity'])
         out = pd.DataFrame(props)
         
